@@ -3,16 +3,19 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const app = express();
 const PORT = process.env.PORT || 8000;
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const jwtSecret = '7977e1b56e6b65a31570db96d09176af84f96b3cba2afaee858b1eff7f9d7933';
 
 app.use(bodyParser.json());
 
-// Connect to your MongoDB database
+// Connect to MongoDB database
 mongoose.connect('mongodb://127.0.0.1:27017/social_media_db', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
 
-// Define Mongoose models
+//  Mongoose models
 const User = mongoose.model('User', {
   email: String,
   password: String,
@@ -26,40 +29,58 @@ const Post = mongoose.model('Post', {
   comments: [{ text: String, userId: mongoose.Types.ObjectId }],
 });
 
-// User Registration API
-app.post('/api/register', (req, res) => {
-  const { email, password, username } = req.body;
-
-  // Check if required fields are present
-  if (!email || !password || !username) {
-    return res.status(400).json({ error: 'Missing fields' });
+// Middleware to verify JWT token
+function verifyToken(req, res, next) {
+  const token = req.headers.authorization;
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // Check if the username or email is already registered
-  User.findOne({ $or: [{ email }, { username }] }, (err, existingUser) => {
+  jwt.verify(token, jwtSecret, (err, decoded) => {
     if (err) {
-      return res.status(500).json({ error: 'Internal server error' });
+      return res.status(401).json({ error: 'Invalid token' });
     }
 
+    req.userId = decoded.userId;
+    next();
+  });
+}
+
+// User Registration API
+app.post('/api/register', async (req, res) => {
+  try {
+    const { email, password, username } = req.body;
+
+    // Check if required fields are present
+    if (!email || !password || !username) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+
+    // Check if the username or email is already registered
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    // Create a new user
-    const newUser = new User({ email, password, username });
+    // Hash the password
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    newUser.save((err) => {
-      if (err) {
-        return res.status(500).json({ error: 'Internal server error' });
-      }
+    // Create a new user with the hashed password
+    const newUser = new User({ email, password: hashedPassword, username });
+    await newUser.save();
 
-      return res.status(201).json({ message: 'User registered successfully' });
-    });
-  });
+    // Create and send a JWT token
+    const token = jwt.sign({ userId: newUser._id }, jwtSecret, { expiresIn: '1h' });
+
+    res.status(201).json({ message: 'User registered successfully', token });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
 });
 
-
-// Forget User Password API (Task 1)
+// Forget User Password API (T-1)
 app.post('/api/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
@@ -84,7 +105,6 @@ app.post('/api/forgot-password', async (req, res) => {
     await user.save();
 
     // Send the reset token to the user's email
-    
 
     res.json({ message: 'Password reset token sent to your email' });
   } catch (error) {
@@ -93,9 +113,8 @@ app.post('/api/forgot-password', async (req, res) => {
   }
 });
 
-
-// Create a Post API (Task 2)
-app.post('/api/posts', async (req, res) => {
+// Create a Post API (T-2)
+app.post('/api/posts', verifyToken, async (req, res) => {
   try {
     const { content, userId } = req.body;
 
@@ -112,8 +131,8 @@ app.post('/api/posts', async (req, res) => {
   }
 });
 
-// Read a Post API (Task 2)
-app.get('/api/posts/:postId', async (req, res) => {
+// Read a Post API (T-2)
+app.get('/api/posts/:postId', verifyToken, async (req, res) => {
   try {
     const { postId } = req.params;
 
@@ -131,8 +150,8 @@ app.get('/api/posts/:postId', async (req, res) => {
   }
 });
 
-// Update a Post API (Task 2)
-app.put('/api/posts/:postId', async (req, res) => {
+// Update a Post API (T-2)
+app.put('/api/posts/:postId', verifyToken, async (req, res) => {
   try {
     const { postId } = req.params;
     const { content } = req.body;
@@ -157,8 +176,8 @@ app.put('/api/posts/:postId', async (req, res) => {
   }
 });
 
-// Delete a Post API (Task 2)
-app.delete('/api/posts/:postId', async (req, res) => {
+// Delete a Post API (T-2)
+app.delete('/api/posts/:postId', verifyToken, async (req, res) => {
   try {
     const { postId } = req.params;
 
@@ -179,8 +198,8 @@ app.delete('/api/posts/:postId', async (req, res) => {
   }
 });
 
-// Like a Post API (Task 2)
-app.post('/api/posts/:postId/like', async (req, res) => {
+// Like a Post API (T-2)
+app.post('/api/posts/:postId/like', verifyToken, async (req, res) => {
   try {
     const { postId } = req.params;
     const { userId } = req.body;
@@ -210,8 +229,8 @@ app.post('/api/posts/:postId/like', async (req, res) => {
   }
 });
 
-// Add Comment to Post API (Task 2)
-app.post('/api/posts/:postId/comments', async (req, res) => {
+// Add Comment to Post API (T-2)
+app.post('/api/posts/:postId/comments', verifyToken, async (req, res) => {
   try {
     const { postId } = req.params;
     const { userId, text } = req.body;
@@ -235,8 +254,6 @@ app.post('/api/posts/:postId/comments', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
-
 
 // Start the server
 app.listen(PORT, () => {
